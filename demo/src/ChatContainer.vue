@@ -50,6 +50,8 @@
 			:rooms-loaded="roomsLoaded"
 			:room-actions="roomActions"
 			:menu-actions="menuActions"
+      :single-room="!isAdmin"
+      :show-audio="false"
 			:message-selection-actions="messageSelectionActions"
 			:room-message="roomMessage"
 			:templates-text="templatesText"
@@ -97,7 +99,7 @@ export default {
 	props: {
 		currentUserId: { type: String, required: true },
 		theme: { type: String, required: true },
-		isDevice: { type: Boolean, required: true }
+		isDevice: { type: Boolean, required: true },
 	},
 
 	emits: ['show-demo-options'],
@@ -112,6 +114,7 @@ export default {
 			roomsLoaded: false,
 			loadingRooms: true,
 			allUsers: [],
+      isAdmin: false,
 			loadingLastMessageByRoom: 0,
 			roomsLoadedCount: false,
 			selectedRoom: null,
@@ -133,15 +136,9 @@ export default {
 			removeUserId: '',
 			removeUsers: [],
 			roomActions: [
-				{ name: 'inviteUser', title: 'Invite User' },
-				{ name: 'removeUser', title: 'Remove User' },
-				{ name: 'deleteRoom', title: 'Delete Room' }
+				{ name: 'modifyName', title: '修改备注' }
 			],
-			menuActions: [
-				{ name: 'inviteUser', title: 'Invite User' },
-				{ name: 'removeUser', title: 'Remove User' },
-				{ name: 'deleteRoom', title: 'Delete Room' }
-			],
+			menuActions: [],
 			messageSelectionActions: [{ name: 'deleteMessages', title: 'Delete' }],
 			styles: { container: { borderRadius: '4px' } },
 			templatesText: [
@@ -172,10 +169,22 @@ export default {
 	},
 
 	mounted() {
-		this.fetchRooms()
-		firebaseService.updateUserOnlineStatus(this.currentUserId)
+    if (this.currentUserId.length > 0) {
+      firestoreService.getUser(this.currentUserId).then(user => {
+        this.fetchRooms()
+        firebaseService.updateUserOnlineStatus(this.currentUserId)
+        console.debug('mounted.user', user)
+        this.isAdmin = user.role === 'ADMIN' || user.role === 'AGENT'
+        if (!this.isAdmin) {
+          this.getRoom().then(room => {
+            console.debug('room:', room)
+            this.roomId = room.id;
+          })
+        }
+      })
+    }
 	},
-
+  // nextdo: 用户新建会话，客服那边要有通知
 	methods: {
 		resetRooms() {
 			this.loadingRooms = true
@@ -207,9 +216,11 @@ export default {
 		async fetchMoreRooms() {
 			if (this.endRooms && !this.startRooms) {
 				this.roomsLoaded = true
+        console.debug('no fetch')
 				return
 			}
 
+      console.debug('fetch params:', this.currentUserId, this.roomsPerPage, this.startRooms)
 			const query = firestoreService.roomsQuery(
 				this.currentUserId,
 				this.roomsPerPage,
@@ -218,7 +229,6 @@ export default {
 
 			const { data, docs } = await firestoreService.getRooms(query)
 			// this.incrementDbCounter('Fetch Rooms', data.length)
-
 			this.roomsLoaded = data.length === 0 || data.length < this.roomsPerPage
 
 			if (this.startRooms) this.endRooms = this.startRooms
@@ -242,46 +252,32 @@ export default {
 			})
 
 			this.allUsers = [...this.allUsers, ...(await Promise.all(rawUsers))]
+      console.debug('allUsers', this.allUsers)
 
 			const roomList = {}
 			data.forEach(room => {
 				roomList[room.id] = { ...room, users: [] }
 
 				room.users.forEach(userId => {
-					const foundUser = this.allUsers.find(user => user?._id === userId)
+					const foundUser = this.allUsers.find(user => user?.id === userId)
 					if (foundUser) roomList[room.id].users.push(foundUser)
 				})
 			})
 
 			const formattedRooms = []
 
+      console.debug('roomList', roomList)
 			Object.keys(roomList).forEach(key => {
 				const room = roomList[key]
 
-				const roomContacts = room.users.filter(
-					user => user._id !== this.currentUserId
-				)
-
-				room.roomName =
-					roomContacts.map(user => user.username).join(', ') || 'Myself'
-
-				const roomAvatar =
-					roomContacts.length === 1 && roomContacts[0].avatar
-						? roomContacts[0].avatar
-						: require('@/assets/logo.png')
+				room.roomName = room.roomName ? room.roomName : room.users[room.users.length - 1].username
+				const roomAvatar = require('@/assets/logo.png')
 
 				formattedRooms.push({
 					...room,
 					roomId: key,
 					avatar: roomAvatar,
-					index: room.lastUpdated.seconds,
-					lastMessage: {
-						content: 'Room created',
-						timestamp: formatTimestamp(
-							new Date(room.lastUpdated.seconds),
-							room.lastUpdated
-						)
-					}
+					index: room.lastUpdated.seconds
 				})
 			})
 
@@ -293,6 +289,7 @@ export default {
 				this.roomsLoadedCount = 0
 			}
 
+      console.debug('fetch complete:', this.rooms)
 			this.listenUsersOnlineStatus(formattedRooms)
 			this.listenRooms(query)
 			// setTimeout(() => console.log('TOTAL', this.dbRequestCount), 2000)
@@ -668,7 +665,7 @@ export default {
 
 		menuActionHandler({ action, roomId }) {
 			switch (action.name) {
-				case 'inviteUser':
+				case 'modifyName':
 					return this.inviteUser(roomId)
 				case 'removeUser':
 					return this.removeUser(roomId)
@@ -726,7 +723,18 @@ export default {
 					if (foundRoom) {
 						foundRoom.typingUsers = room.typingUsers
 						foundRoom.index = room.lastUpdated.seconds
-					}
+					} else {
+            // nextdo: 将新房间加入到房间列表中，将fetchMoreRooms中的房间转换代码抽离一个函数
+            console.debug('new room:', room)
+            const roomAvatar = require('@/assets/logo.png')
+
+            formattedRooms.push({
+              ...room,
+              roomId: key,
+              avatar: roomAvatar,
+              index: room.lastUpdated.seconds
+            })
+          }
 				})
 			})
 			this.roomsListeners.push(listener)
@@ -822,6 +830,11 @@ export default {
 			this.fetchRooms()
 		},
 
+    async getRoom() {
+      console.debug('getRoom:', this.rooms)
+      return this.rooms[0]
+    },
+
 		async deleteRoom(roomId) {
 			const room = this.rooms.find(r => r.roomId === roomId)
 			if (
@@ -862,7 +875,7 @@ export default {
 		// 	this.dbRequestCount += size
 		// 	console.log(type, size)
 		// }
-	}
+	},
 }
 </script>
 
