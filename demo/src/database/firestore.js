@@ -29,6 +29,10 @@ const MESSAGE_PATH = roomId => {
 	return `${ROOMS_PATH}/${roomId}/${MESSAGES_PATH}`
 }
 
+const USER_ROOM_PATH = userId => {
+  return `${ROOMS_PATH}/${userId}`
+}
+
 const TIMESTAMP_FIELD = 'timestamp'
 const LAST_UPDATED_FIELD = 'lastUpdated'
 const TYPING_USERS_FIELD = 'typingUsers'
@@ -121,6 +125,10 @@ export const roomsQuery = (currentUserId, roomsPerPage, lastRoom) => {
 	}
 }
 
+export const roomQuery = (currentUserId) => {
+  return query(roomRef(currentUserId))
+}
+
 export const getAllRooms = () => {
 	return getDocuments(query(roomsRef))
 }
@@ -129,12 +137,20 @@ export const getRooms = query => {
 	return getDocuments(query)
 }
 
+export const getRoom = currentUserId => {
+  return getDoc(userRoomRef(currentUserId))
+}
+
 export const addRoom = data => {
 	return addDocument(roomsRef, data)
 }
 
 export const updateRoom = (roomId, data) => {
 	return updateDocument(roomRef(roomId), data)
+}
+
+export const updateRoomField = (roomId, field, data) => {
+  return updateDoc(roomRef(roomId), field, data)
 }
 
 export const deleteRoom = roomId => {
@@ -163,7 +179,12 @@ export const updateRoomTypingUsers = (roomId, currentUserId, action) => {
 	const arrayUpdate =
 		action === 'add' ? arrayUnion(currentUserId) : arrayRemove(currentUserId)
 
-	return updateRoom(roomId, { [TYPING_USERS_FIELD]: arrayUpdate })
+	return updateRoomField(roomId, TYPING_USERS_FIELD, {[TYPING_USERS_FIELD]: arrayUpdate})
+}
+
+export const updateRoomLastUpdated = (roomId, time) => {
+  console.debug('updateRoomLastUpdated', roomId, time)
+  return updateRoomField(roomId, LAST_UPDATED_FIELD, {[LAST_UPDATED_FIELD]: time})
 }
 
 // MESSAGES
@@ -173,6 +194,10 @@ const messagesRef = roomId => {
 
 const messageRef = (roomId, messageId) => {
 	return doc(firestoreDb, MESSAGE_PATH(roomId), messageId)
+}
+
+const userRoomRef = (currentUserId) => {
+  return doc(firestoreDb, ROOMS_PATH, currentUserId)
 }
 
 export const getMessages = (roomId, messagesPerPage, lastLoadedMessage) => {
@@ -203,6 +228,7 @@ export const getMessage = (roomId, messageId) => {
 }
 
 export const addMessage = (roomId, data) => {
+  console.debug('addMessage', roomId, data)
 	return addDocument(messagesRef(roomId), data)
 }
 
@@ -215,6 +241,7 @@ export const deleteMessage = (roomId, messageId) => {
 }
 
 export const listenRooms = (query, callback) => {
+  console.debug("listenRooms")
 	return firestoreListener(query, rooms => {
 		callback(formatQueryDataArray(rooms))
 	})
@@ -255,6 +282,7 @@ export const listenMessages = (
 	previousLastLoadedMessage,
 	callback
 ) => {
+  console.debug('messages.lis')
 	return firestoreListener(
 		paginatedMessagesQuery(
 			roomId,
@@ -285,6 +313,7 @@ const lastMessageQuery = roomId => {
 }
 
 export const listenLastMessage = (roomId, callback) => {
+  console.debug('lis.message', roomId)
 	return firestoreListener(query(lastMessageQuery(roomId)), messages => {
 		callback(formatQueryDataArray(messages))
 	})

@@ -83,9 +83,14 @@
 import * as firestoreService from '@/database/firestore'
 import * as firebaseService from '@/database/firebase'
 import * as storageService from '@/database/storage'
+import { getAuth, signInWithCustomToken } from "firebase/auth"
+
 import { parseTimestamp, formatTimestamp } from '@/utils/dates'
+import { getUserToken } from '@/api/user'
 
 import ChatWindow from './../../src/lib/ChatWindow'
+import roomAvatar from '@/assets/logo.png'
+import { updateRoomField } from '@/database/firestore'
 // import ChatWindow, { Rooms } from 'vue-advanced-chat'
 // import ChatWindow from 'vue-advanced-chat'
 // import 'vue-advanced-chat/dist/vue-advanced-chat.css'
@@ -170,18 +175,49 @@ export default {
 
 	mounted() {
     if (this.currentUserId.length > 0) {
-      firestoreService.getUser(this.currentUserId).then(user => {
-        this.fetchRooms()
-        firebaseService.updateUserOnlineStatus(this.currentUserId)
-        console.debug('mounted.user', user)
-        this.isAdmin = user.role === 'ADMIN' || user.role === 'AGENT'
-        if (!this.isAdmin) {
-          this.getRoom().then(room => {
-            console.debug('room:', room)
-            this.roomId = room.id;
+      getUserToken(this.currentUserId).then(response => {
+        console.debug('response:', response)
+        if (response.success) {
+          const auth = getAuth()
+          return signInWithCustomToken(auth, response.data.token).then(userCredential => {
+            console.debug('auth', userCredential.user.auth)
+            return Promise.resolve({
+              uid: userCredential.user.auth.currentUser.uid,
+              role: response.data.role
+            })
           })
+        } else {
+          return Promise.reject(new Error('haha'))
         }
+      }).then(userInfo => {
+        console.debug('userInfo:', userInfo)
+        this.isAdmin = userInfo.role === 'ADMIN' || userInfo.role === 'AGENT'
+        if (!this.isAdmin) {
+          return firestoreService.getRoom(this.currentUserId)
+            .then(room => {
+              // nextdo: this.currentId 赋值给 room
+              console.debug('room', room.data())
+              return this.handleRooms([ { ...room.data(), roomName: 'coinbase', _id: this.currentUserId, id: this.currentUserId} ])
+            }).then(() => {
+              this.roomId = this.rooms[0].id
+            })
+        } else {
+          return this.fetchRooms()
+        }
+      }).catch(error => {
+        console.error(error)
       })
+
+      // firebaseService.updateUserOnlineStatus(this.currentUserId)
+      // this.fetchRooms()
+      // firebaseService.updateUserOnlineStatus(this.currentUserId)
+      //
+      // if (!this.isAdmin) {
+      //   this.getRoom().then(room => {
+      //     console.debug('room:', room)
+      //     this.roomId = room.id
+      //   })
+      // }
     }
 	},
   // nextdo: 用户新建会话，客服那边要有通知
@@ -229,71 +265,80 @@ export default {
 
 			const { data, docs } = await firestoreService.getRooms(query)
 			// this.incrementDbCounter('Fetch Rooms', data.length)
+      console.debug('room.data:', data)
 			this.roomsLoaded = data.length === 0 || data.length < this.roomsPerPage
 
 			if (this.startRooms) this.endRooms = this.startRooms
 			this.startRooms = docs[docs.length - 1]
 
-			const roomUserIds = []
-			data.forEach(room => {
-				room.users.forEach(userId => {
-					const foundUser = this.allUsers.find(user => user?._id === userId)
-					if (!foundUser && roomUserIds.indexOf(userId) === -1) {
-						roomUserIds.push(userId)
-					}
-				})
-			})
-
-			// this.incrementDbCounter('Fetch Room Users', roomUserIds.length)
-			const rawUsers = []
-			roomUserIds.forEach(userId => {
-				const promise = firestoreService.getUser(userId)
-				rawUsers.push(promise)
-			})
-
-			this.allUsers = [...this.allUsers, ...(await Promise.all(rawUsers))]
-      console.debug('allUsers', this.allUsers)
-
-			const roomList = {}
-			data.forEach(room => {
-				roomList[room.id] = { ...room, users: [] }
-
-				room.users.forEach(userId => {
-					const foundUser = this.allUsers.find(user => user?.id === userId)
-					if (foundUser) roomList[room.id].users.push(foundUser)
-				})
-			})
-
-			const formattedRooms = []
-
-      console.debug('roomList', roomList)
-			Object.keys(roomList).forEach(key => {
-				const room = roomList[key]
-
-				room.roomName = room.roomName ? room.roomName : room.users[room.users.length - 1].username
-				const roomAvatar = require('@/assets/logo.png')
-
-				formattedRooms.push({
-					...room,
-					roomId: key,
-					avatar: roomAvatar,
-					index: room.lastUpdated.seconds
-				})
-			})
-
-			this.rooms = this.rooms.concat(formattedRooms)
-			formattedRooms.forEach(room => this.listenLastMessage(room))
-
-			if (!this.rooms.length) {
-				this.loadingRooms = false
-				this.roomsLoadedCount = 0
-			}
-
-      console.debug('fetch complete:', this.rooms)
-			this.listenUsersOnlineStatus(formattedRooms)
-			this.listenRooms(query)
+      await this.handleRooms(data)
+      this.listenRooms(query)
 			// setTimeout(() => console.log('TOTAL', this.dbRequestCount), 2000)
 		},
+
+    async handleRooms(rooms) {
+      let data = rooms
+      console.debug('data', data)
+      const roomUserIds = []
+      data.forEach(room => {
+        room.users.forEach(userId => {
+          const foundUser = this.allUsers.find(user => user?._id === userId)
+          if (!foundUser && roomUserIds.indexOf(userId) === -1) {
+            roomUserIds.push(userId)
+          }
+        })
+      })
+
+      // this.incrementDbCounter('Fetch Room Users', roomUserIds.length)
+      const rawUsers = []
+      roomUserIds.forEach(userId => {
+        const promise = firestoreService.getUser(userId)
+        rawUsers.push(promise)
+      })
+
+      this.allUsers = [...this.allUsers, ...(await Promise.all(rawUsers))]
+      console.debug('allUsers', this.allUsers)
+
+      const roomList = {}
+      data.forEach(room => {
+        roomList[room.id] = { ...room, users: [] }
+
+        room.users.forEach(userId => {
+          const foundUser = this.allUsers.find(user => user?.id === userId)
+          if (foundUser) roomList[room.id].users.push(foundUser)
+        })
+      })
+
+      const formattedRooms = []
+
+      console.debug('roomList', roomList)
+      Object.keys(roomList).forEach(key => {
+        const room = roomList[key]
+
+        room.roomName = room.roomName ? room.roomName : room.users[room.users.length - 1].username
+        const roomAvatar = require('@/assets/logo.png')
+
+        formattedRooms.push({
+          ...room,
+          roomId: key,
+          avatar: roomAvatar,
+          index: room.lastUpdated.seconds
+        })
+      })
+
+      this.rooms = this.rooms.concat(formattedRooms)
+      formattedRooms.forEach(room => this.listenLastMessage(room))
+
+      if (!this.rooms.length) {
+        this.loadingRooms = false
+        this.roomsLoadedCount = 0
+      }
+
+      console.debug('fetch complete:', this.rooms)
+      this.listenUsersOnlineStatus(formattedRooms)
+      console.debug('listenUsersOnline status finish:')
+      // this.listenRooms(query)
+    },
 
 		listenLastMessage(room) {
 			const listener = firestoreService.listenLastMessage(
@@ -369,6 +414,7 @@ export default {
 
 			this.selectedRoom = room.roomId
 
+      console.debug("fetch messgges begein", room)
 			firestoreService
 				.getMessages(room.roomId, this.messagesPerPage, this.lastLoadedMessage)
 				.then(({ data, docs }) => {
@@ -491,7 +537,8 @@ export default {
 				}
 			}
 
-			firestoreService.updateRoom(roomId, { lastUpdated: new Date() })
+      console.debug('updateRoom', roomId)
+			firestoreService.updateRoomLastUpdated(roomId, new Date())
 		},
 
 		async editMessage({ messageId, newContent, roomId, files }) {

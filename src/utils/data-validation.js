@@ -28,7 +28,7 @@ export function roomsValidation(obj) {
 
 export function partcipantsValidation(obj) {
 	const participantsValidate = [
-		{ key: '_id', type: ['string', 'number'] },
+		{ key: 'id', type: ['string', 'number'] },
 		{ key: 'username', type: ['string'] }
 	]
 
