@@ -21,3 +21,4 @@ yarn-error.log*
 *.sln
 *.sw?
 src/api/env.js
+vue-advanced-chat
