@@ -1,42 +1,5 @@
 <template>
 	<div class="window-container" :class="{ 'window-mobile': isDevice }">
-		<form v-if="addNewRoom" @submit.prevent="createRoom">
-			<input v-model="addRoomUsername" type="text" placeholder="Add username" />
-			<button type="submit" :disabled="disableForm || !addRoomUsername">
-				Create Room
-			</button>
-			<button class="button-cancel" @click="addNewRoom = false">
-				Cancel
-			</button>
-		</form>
-
-		<form v-if="inviteRoomId" @submit.prevent="addRoomUser">
-			<input v-model="invitedUsername" type="text" placeholder="Add username" />
-			<button type="submit" :disabled="disableForm || !invitedUsername">
-				Add User
-			</button>
-			<button class="button-cancel" @click="inviteRoomId = null">
-				Cancel
-			</button>
-		</form>
-
-		<form v-if="removeRoomId" @submit.prevent="deleteRoomUser">
-			<select v-model="removeUserId">
-				<option default value="">
-					Select User
-				</option>
-				<option v-for="user in removeUsers" :key="user._id" :value="user._id">
-					{{ user.username }}
-				</option>
-			</select>
-			<button type="submit" :disabled="disableForm || !removeUserId">
-				Remove User
-			</button>
-			<button class="button-cancel" @click="removeRoomId = null">
-				Cancel
-			</button>
-		</form>
-
 		<chat-window
 			:height="screenHeight"
 			:theme="theme"
@@ -263,6 +226,7 @@ export default {
 				this.startRooms
 			)
 
+      console.debug('before get rooms')
 			const { data, docs } = await firestoreService.getRooms(query)
 			// this.incrementDbCounter('Fetch Rooms', data.length)
       console.debug('room.data:', data)
@@ -275,7 +239,6 @@ export default {
       this.listenRooms(query)
 			// setTimeout(() => console.log('TOTAL', this.dbRequestCount), 2000)
 		},
-
     async handleRooms(rooms) {
       let data = rooms
       console.debug('data', data)
@@ -334,9 +297,9 @@ export default {
         this.roomsLoadedCount = 0
       }
 
-      console.debug('fetch complete:', this.rooms)
-      this.listenUsersOnlineStatus(formattedRooms)
-      console.debug('listenUsersOnline status finish:')
+      // console.debug('fetch complete:', this.rooms)
+      // this.listenUsersOnlineStatus(formattedRooms)
+      // console.debug('listenUsersOnline status finish:')
       // this.listenRooms(query)
     },
 
@@ -447,6 +410,7 @@ export default {
 				this.lastLoadedMessage,
 				this.previousLastLoadedMessage,
 				messages => {
+          console.debug("new messages:", messages)
 					messages.forEach(message => {
 						const formattedMessage = this.formatMessage(room, message)
 						const messageIndex = this.messages.findIndex(
@@ -472,9 +436,16 @@ export default {
 				message.sender_id !== this.currentUserId &&
 				(!message.seen || !message.seen[this.currentUserId])
 			) {
-				firestoreService.updateMessage(room.roomId, message.id, {
-					[`seen.${this.currentUserId}`]: new Date()
-				})
+        if (!this.isAdmin) {
+          firestoreService.updateMessage(room.roomId, message.id, {
+            [`seen.${this.currentUserId}`]: new Date(),
+            userSeen: true
+          })
+        } else {
+          firestoreService.updateMessage(room.roomId, message.id, {
+            [`seen.${this.currentUserId}`]: new Date()
+          })
+        }
 			}
 		},
 
@@ -510,7 +481,8 @@ export default {
 			const message = {
 				sender_id: this.currentUserId,
 				content,
-				timestamp: new Date()
+				timestamp: new Date(),
+        userSeen: false
 			}
 
 			if (files) {
@@ -771,15 +743,30 @@ export default {
 						foundRoom.typingUsers = room.typingUsers
 						foundRoom.index = room.lastUpdated.seconds
 					} else {
-            // nextdo: 将新房间加入到房间列表中，将fetchMoreRooms中的房间转换代码抽离一个函数
-            console.debug('new room:', room)
-            const roomAvatar = require('@/assets/logo.png')
+            const roomUserIds = []
+            room.users.forEach(userId => {
+              const foundUser = this.allUsers.find(user => user?._id === userId)
+              if (!foundUser && roomUserIds.indexOf(userId) === -1) {
+                roomUserIds.push(userId)
+              }
+            })
 
-            formattedRooms.push({
-              ...room,
-              roomId: key,
-              avatar: roomAvatar,
-              index: room.lastUpdated.seconds
+            const rawUsers = []
+            roomUserIds.forEach(userId => {
+              const promise = firestoreService.getUser(userId)
+              rawUsers.push(promise)
+            })
+
+            Promise.all(rawUsers).then(users => {
+              this.allUsers = [...this.allUsers, ...users]
+              this.rooms.push({
+                ...room,
+                roomId: room.id,
+                avatar: require('@/assets/logo.png'),
+                index: room.lastUpdated.seconds
+              })
+
+              this.listenLastMessage(room)
             })
           }
 				})
@@ -876,11 +863,6 @@ export default {
 			this.removeUserId = ''
 			this.fetchRooms()
 		},
-
-    async getRoom() {
-      console.debug('getRoom:', this.rooms)
-      return this.rooms[0]
-    },
 
 		async deleteRoom(roomId) {
 			const room = this.rooms.find(r => r.roomId === roomId)

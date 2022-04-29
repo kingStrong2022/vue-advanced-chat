@@ -179,12 +179,12 @@ export const updateRoomTypingUsers = (roomId, currentUserId, action) => {
 	const arrayUpdate =
 		action === 'add' ? arrayUnion(currentUserId) : arrayRemove(currentUserId)
 
-	return updateRoomField(roomId, TYPING_USERS_FIELD, {[TYPING_USERS_FIELD]: arrayUpdate})
+	return updateRoomField(roomId, TYPING_USERS_FIELD, arrayUpdate)
 }
 
 export const updateRoomLastUpdated = (roomId, time) => {
   console.debug('updateRoomLastUpdated', roomId, time)
-  return updateRoomField(roomId, LAST_UPDATED_FIELD, {[LAST_UPDATED_FIELD]: time})
+  return updateRoomField(roomId, LAST_UPDATED_FIELD, time)
 }
 
 // MESSAGES
@@ -241,7 +241,6 @@ export const deleteMessage = (roomId, messageId) => {
 }
 
 export const listenRooms = (query, callback) => {
-  console.debug("listenRooms")
 	return firestoreListener(query, rooms => {
 		callback(formatQueryDataArray(rooms))
 	})
